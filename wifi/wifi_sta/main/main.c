@@ -19,15 +19,9 @@
 static const char* TAG = "camera";
 #define CAM_USE_WIFI
 
-#if 0
-#define ESP_WIFI_SSID "M5Psram_Cam"
-#define ESP_WIFI_PASS ""
-#else
-
-#define ESP_WIFI_SSID "M5-2.4G"
-#define ESP_WIFI_PASS "Office@888888"
-
-#endif
+// TODO: define WiFi SSID and password
+//#define ESP_WIFI_SSID ""
+//#define ESP_WIFI_PASS ""
 
 #define MAX_STA_CONN  1
 
@@ -37,7 +31,7 @@ static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 static EventGroupHandle_t s_wifi_event_group;
-static ip4_addr_t s_ip_addr;
+static esp_ip4_addr_t s_ip_addr;
 const int CONNECTED_BIT = BIT0;
 extern void led_brightness(int duty);
 static camera_config_t camera_config = {
