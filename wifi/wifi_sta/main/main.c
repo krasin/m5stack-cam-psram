@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
@@ -34,6 +35,9 @@ static EventGroupHandle_t s_wifi_event_group;
 static esp_ip4_addr_t s_ip_addr;
 const int CONNECTED_BIT = BIT0;
 extern void led_brightness(int duty);
+
+static bool is_camera_initialized = false;
+
 static camera_config_t camera_config = {
     .pin_reset = CAM_PIN_RESET,
     .pin_xclk = CAM_PIN_XCLK,
@@ -67,6 +71,31 @@ static camera_config_t camera_config = {
 static void wifi_init_softap();
 static esp_err_t http_server_init();
 
+bool ensure_camera_init() {
+  if (is_camera_initialized) {
+    ESP_LOGI(TAG, "ensure_camera_init: already initialized\n");
+    return true;
+  }
+
+  esp_err_t err = esp_camera_init(&camera_config);
+
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "ensure_camera_init: camera Init Failed");
+    return false;
+  }
+
+  is_camera_initialized = true;
+
+#ifdef FISH_EYE_CAM
+  // flip img, other cam setting view sensor.h
+  sensor_t *s = esp_camera_sensor_get();
+  s->set_vflip(s, 1);
+  s->set_hmirror(s, 1);
+#endif
+  ESP_LOGI(TAG, "ensure_camera_init: successfully initialized\n");
+  return true;
+}
+
 void app_main()
 {
     esp_log_level_set("wifi", ESP_LOG_INFO);
@@ -77,26 +106,9 @@ void app_main()
         ESP_ERROR_CHECK( nvs_flash_init() );
     }
 
-    err = esp_camera_init(&camera_config);
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Camera Init Failed");
-        for(;;) {
-            vTaskDelay(10);
-        }
-    } else {
-        led_brightness(20);
-    }
-
-#ifdef FISH_EYE_CAM
-    // flip img, other cam setting view sensor.h
-    sensor_t *s = esp_camera_sensor_get();
-    s->set_vflip(s, 1);
-    s->set_hmirror(s, 1);
-#endif
-
 #ifdef CAM_USE_WIFI
     wifi_init_softap();
+    led_brightness(20);
 
     vTaskDelay(100 / portTICK_PERIOD_MS);
     http_server_init();
@@ -105,9 +117,20 @@ void app_main()
 
 #ifdef CAM_USE_WIFI
 
+static char kErrCameraInitFailed[] = "camera failed to initialize!";
+
 esp_err_t jpg_httpd_handler(httpd_req_t *req){
-    camera_fb_t * fb = NULL;
     esp_err_t res = ESP_OK;
+    bool ok = ensure_camera_init();
+    if (!ok) {
+      ESP_LOGE(TAG, "Camera initialization failed");
+      res = httpd_resp_set_type(req, "text/html");
+      if(res == ESP_OK) {
+	res = httpd_resp_send(req, kErrCameraInitFailed, strlen(kErrCameraInitFailed));
+      }
+      return;
+    }
+    camera_fb_t * fb = NULL;
     size_t fb_len = 0;
     int64_t fr_start = esp_timer_get_time();
 
