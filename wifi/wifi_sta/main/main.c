@@ -121,7 +121,7 @@ void app_main()
 
 #ifdef CAM_USE_WIFI
     wifi_init_softap();
-    led_brightness(20);
+    //led_brightness(20);
 
     vTaskDelay(100 / portTICK_PERIOD_MS);
     http_server_init();
