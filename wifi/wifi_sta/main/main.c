@@ -8,6 +8,7 @@
 #include "driver/gpio.h"
 #include "sdkconfig.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -30,6 +31,10 @@ static EventGroupHandle_t s_wifi_event_group;
 static esp_ip4_addr_t s_ip_addr;
 const int CONNECTED_BIT = BIT0;
 extern void led_brightness(int duty);
+
+esp_pm_config_esp32_t pm_config = {0};
+
+esp_pm_lock_handle_t freq_handle = 0;
 
 // Forward declare cam clock stop/start. Note (new?)  signature.
 esp_err_t camera_enable_out_clock(camera_config_t *config);
@@ -109,6 +114,11 @@ void app_main()
         ESP_ERROR_CHECK( nvs_flash_init() );
     }
 
+    err = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "1", &freq_handle);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "failed to initialize freq lock");
+    }
+
 #ifdef CAM_USE_WIFI
     wifi_init_softap();
     led_brightness(20);
@@ -124,6 +134,10 @@ static char kErrCameraInitFailed[] = "camera failed to initialize!";
 
 esp_err_t jpg_httpd_handler(httpd_req_t *req){
     esp_err_t res = ESP_OK;
+    res = esp_pm_lock_acquire(freq_handle);
+    if (res != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to acquire freq lock!");
+    }
     bool ok = ensure_camera_init();
     if (!ok) {
       ESP_LOGE(TAG, "Camera initialization failed");
@@ -157,6 +171,17 @@ esp_err_t jpg_httpd_handler(httpd_req_t *req){
     ESP_LOGI(TAG, "JPG: %uKB %ums", (uint32_t)(fb_len/1024), (uint32_t)((fr_end - fr_start)/1000));
     camera_disable_out_clock();
     ESP_LOGI(TAG, "JPG: camera clock disabled");
+    pm_config.max_freq_mhz = 160;
+    pm_config.min_freq_mhz = 10;
+    pm_config.light_sleep_enable = false;
+    res = esp_pm_configure(&pm_config);
+    if (res != ESP_OK) {
+      ESP_LOGE(TAG, "esp_pm_configure failed, res=%d", res);
+    }
+    res = esp_pm_lock_release(freq_handle);
+    if (res != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to release freq lock!");
+    }
     return res;
 }
 
