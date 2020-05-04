@@ -22,13 +22,13 @@ static const char* TAG = "camera";
 #define CAM_USE_WIFI
 
 // TODO: define WiFi SSID and password
-//#define ESP_WIFI_SSID ""
-//#define ESP_WIFI_PASS ""
+#define ESP_WIFI_SSID "Maglev5"
+#define ESP_WIFI_PASS "karawi2barafi"
 
 #define MAX_STA_CONN  1
 
 static EventGroupHandle_t s_wifi_event_group;
-static esp_ip4_addr_t s_ip_addr;
+//static esp_ip4_addr_t s_ip_addr;
 const int CONNECTED_BIT = BIT0;
 extern void led_brightness(int duty);
 
@@ -58,7 +58,7 @@ static camera_config_t camera_config = {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
+    .frame_size = FRAMESIZE_UXGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
 
     .jpeg_quality = 15, //0-63 lower number means higher quality
     .fb_count = 2 //if more than one, i2s runs in continuous mode. Use only with JPEG
@@ -175,7 +175,7 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
       break;
     case SYSTEM_EVENT_STA_GOT_IP:
       ESP_LOGI(TAG, "got ip:%s", ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
-      s_ip_addr = event->event_info.got_ip.ip_info.ip;
+      //s_ip_addr = event->event_info.got_ip.ip_info.ip;
       xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
       break;
     case SYSTEM_EVENT_AP_STACONNECTED:
