@@ -93,6 +93,10 @@ bool ensure_camera_init() {
 
 void app_main()
 {
+    gpio_pad_select_gpio(GPIO_NUM_4);
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(GPIO_NUM_4, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_4, 0);
     esp_log_level_set("wifi", ESP_LOG_INFO);
     
     esp_err_t err = nvs_flash_init();
@@ -103,10 +107,32 @@ void app_main()
 
 #ifdef CAM_USE_WIFI
     wifi_init_softap();
+
     //led_brightness(20);
 
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    http_server_init();
+
+    ESP_LOGI(TAG, "Waiting for IP address...\n");
+    EventBits_t uxBits = xEventGroupWaitBits(
+        s_wifi_event_group, CONNECTED_BIT,
+	false /*xClearOnExit*/, true /*xWaitForAllBits*/,
+	10000 / portTICK_PERIOD_MS);
+    if ((uxBits & CONNECTED_BIT) == 0) {
+          ESP_LOGE(TAG, "Failed to connect to WiFi...\n");
+    } else {
+      ESP_LOGI(TAG, "Connected to WiFi");
+    }
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Ready to sleep...\n");
+    // We are done; let the watch dog turn off the power for a while.
+    gpio_set_level(GPIO_NUM_4, 1);
+    //http_server_init();
+ 
+    while (true) {
+      ESP_LOGI(TAG, "Idling...");
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+
 #endif
 }
 
@@ -123,7 +149,7 @@ esp_err_t jpg_httpd_handler(httpd_req_t *req){
       if(res == ESP_OK) {
 	res = httpd_resp_send(req, kErrCameraInitFailed, strlen(kErrCameraInitFailed));
       }
-      return;
+      return res;
     }
     camera_fb_t * fb = NULL;
     size_t fb_len = 0;
