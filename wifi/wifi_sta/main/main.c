@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
@@ -91,6 +95,48 @@ bool ensure_camera_init() {
   return true;
 }
 
+void handle_camera_turn() {
+  // Connect to the compute box and read one byte.
+  // 0: no photo needed, go to sleep.
+  // 1: 320x240 photo is requested.
+  // 2: 640x480 photo is requested.
+  struct sockaddr_in dest_addr;
+  dest_addr.sin_addr.s_addr = inet_addr("192.168.86.27");
+  dest_addr.sin_family = AF_INET;
+  dest_addr.sin_port = htons(10000);
+  int addr_family = AF_INET;
+  int ip_protocol = IPPROTO_IP;
+
+  int sock =  socket(addr_family, SOCK_STREAM, ip_protocol);
+  if (sock < 0) {
+    ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+    return;
+  }
+  int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(struct sockaddr_in));
+  if (err != 0) {
+    ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
+    return;
+  }
+  ESP_LOGI(TAG, "Successfully connected");
+
+  // Reading 1 byte.
+  char rx_buffer[128];
+  int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+  if (len < 0) {
+    ESP_LOGE(TAG, "recv failed: errno %d", errno);
+    return;
+  }
+  if (len > 1) {
+    ESP_LOGE(TAG, "too many bytes received: %d", len);
+    return;
+  }
+  ESP_LOGI(TAG, "byte received: %d", rx_buffer[0]);
+
+  ESP_LOGI(TAG, "closing the socket...");
+  close(sock);
+  ESP_LOGI(TAG, "socket closed");
+}
+
 void app_main()
 {
     gpio_pad_select_gpio(GPIO_NUM_4);
@@ -123,6 +169,9 @@ void app_main()
       ESP_LOGI(TAG, "Connected to WiFi");
     }
     vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+    handle_camera_turn();
+
     ESP_LOGI(TAG, "Ready to sleep...\n");
     // We are done; let the watch dog turn off the power for a while.
     gpio_set_level(GPIO_NUM_4, 1);
