@@ -132,6 +132,47 @@ void handle_camera_turn() {
   }
   ESP_LOGI(TAG, "byte received: %d", rx_buffer[0]);
 
+  if (rx_buffer[0] == 0) {
+    // we go to sleep; not closing the socket, because the compute box should handle such cases,
+    // as it's impossible to guarantee that the socket will always be closed.
+    // also - avoiding cases, when close(sock) could potentially hang.
+    return;
+  }
+  bool ok = ensure_camera_init();
+  if (!ok) {
+    ESP_LOGE(TAG, "handle_camera_turn: camera initialization failed");
+    return;
+  }
+
+  camera_fb_t * fb = NULL;
+  uint32_t fb_len = 0;
+  int64_t fr_start = esp_timer_get_time();
+
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    ESP_LOGE(TAG, "handle_camera_turn: camera capture failed");
+    return;
+  }
+  fb_len = fb->len;
+  ESP_LOGI(TAG, "fb_len=%d", fb_len);
+  // Sending buffer len. 4 bytes, little endian.
+  int res = send(sock, (const char*)&fb_len, 4, 0);
+  if (res < 0) {
+    ESP_LOGE(TAG, "failed to send buffer length=%d to the socket, errno: %d", fb_len, errno);
+    return;
+  }
+  ESP_LOGI(TAG, "buffer len sent");
+
+  // Sending the buffer.
+  res = send(sock, (const char *)fb->buf, fb->len, 0);
+  if (res < 0) {
+    ESP_LOGE(TAG, "failed to send image of size %d to the socket, errno: %d", fb_len, errno);
+    return;
+  }
+  esp_camera_fb_return(fb);
+  int64_t fr_end = esp_timer_get_time();
+  ESP_LOGI(TAG, "JPG: %uKB %ums", (uint32_t)(fb_len/1024), (uint32_t)((fr_end - fr_start)/1000));
+
   ESP_LOGI(TAG, "closing the socket...");
   close(sock);
   ESP_LOGI(TAG, "socket closed");
@@ -159,6 +200,7 @@ void app_main()
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
     ESP_LOGI(TAG, "Waiting for IP address...\n");
+    bool wifi_ok = false;
     EventBits_t uxBits = xEventGroupWaitBits(
         s_wifi_event_group, CONNECTED_BIT,
 	false /*xClearOnExit*/, true /*xWaitForAllBits*/,
@@ -167,10 +209,13 @@ void app_main()
           ESP_LOGE(TAG, "Failed to connect to WiFi...\n");
     } else {
       ESP_LOGI(TAG, "Connected to WiFi");
+      wifi_ok = true;
     }
     vTaskDelay(3000 / portTICK_PERIOD_MS);
 
-    handle_camera_turn();
+    if (wifi_ok) {
+      handle_camera_turn();
+    }
 
     ESP_LOGI(TAG, "Ready to sleep...\n");
     // We are done; let the watch dog turn off the power for a while.
