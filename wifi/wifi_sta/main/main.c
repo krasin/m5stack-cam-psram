@@ -38,7 +38,7 @@ extern void led_brightness(int duty);
 
 static bool is_camera_initialized = false;
 
-static camera_config_t camera_config = {
+static camera_config_t camera_config_vga = {
     .pin_reset = CAM_PIN_RESET,
     .pin_xclk = CAM_PIN_XCLK,
     .pin_sscb_sda = CAM_PIN_SIOD,
@@ -62,7 +62,37 @@ static camera_config_t camera_config = {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_UXGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
+    .frame_size = FRAMESIZE_VGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
+
+    .jpeg_quality = 15, //0-63 lower number means higher quality
+    .fb_count = 2 //if more than one, i2s runs in continuous mode. Use only with JPEG
+};
+
+static camera_config_t camera_config_qvga = {
+    .pin_reset = CAM_PIN_RESET,
+    .pin_xclk = CAM_PIN_XCLK,
+    .pin_sscb_sda = CAM_PIN_SIOD,
+    .pin_sscb_scl = CAM_PIN_SIOC,
+
+    .pin_d7 = CAM_PIN_D7,
+    .pin_d6 = CAM_PIN_D6,
+    .pin_d5 = CAM_PIN_D5,
+    .pin_d4 = CAM_PIN_D4,
+    .pin_d3 = CAM_PIN_D3,
+    .pin_d2 = CAM_PIN_D2,
+    .pin_d1 = CAM_PIN_D1,
+    .pin_d0 = CAM_PIN_D0,
+    .pin_vsync = CAM_PIN_VSYNC,
+    .pin_href = CAM_PIN_HREF,
+    .pin_pclk = CAM_PIN_PCLK,
+
+    //XCLK 20MHz or 10MHz
+    .xclk_freq_hz = CAM_XCLK_FREQ,
+    .ledc_timer = LEDC_TIMER_0,
+    .ledc_channel = LEDC_CHANNEL_0,
+
+    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
+    .frame_size = FRAMESIZE_QVGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
 
     .jpeg_quality = 15, //0-63 lower number means higher quality
     .fb_count = 2 //if more than one, i2s runs in continuous mode. Use only with JPEG
@@ -71,12 +101,12 @@ static camera_config_t camera_config = {
 static void wifi_init_softap();
 static esp_err_t http_server_init();
 
-bool ensure_camera_init() {
+bool ensure_camera_init(camera_config_t* config) {
   if (is_camera_initialized) {
     return true;
   }
 
-  esp_err_t err = esp_camera_init(&camera_config);
+  esp_err_t err = esp_camera_init(config);
 
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "ensure_camera_init: camera Init Failed");
@@ -138,7 +168,22 @@ void handle_camera_turn() {
     // also - avoiding cases, when close(sock) could potentially hang.
     return;
   }
-  bool ok = ensure_camera_init();
+  camera_config_t* config;
+
+  switch (rx_buffer[0]) {
+  case 1:
+    ESP_LOGI(TAG, "Using QVGA config");
+    config = &camera_config_qvga;
+    break;
+  case 2:
+    ESP_LOGI(TAG, "Using VGA config");
+    config = &camera_config_vga;
+    break;
+  default:
+    ESP_LOGE(TAG, "Unsupported code %d", rx_buffer[0]);
+    return;
+  }
+  bool ok = ensure_camera_init(config);
   if (!ok) {
     ESP_LOGE(TAG, "handle_camera_turn: camera initialization failed");
     return;
@@ -231,61 +276,6 @@ void app_main()
 }
 
 #ifdef CAM_USE_WIFI
-
-static char kErrCameraInitFailed[] = "camera failed to initialize!";
-
-esp_err_t jpg_httpd_handler(httpd_req_t *req){
-    esp_err_t res = ESP_OK;
-    bool ok = ensure_camera_init();
-    if (!ok) {
-      ESP_LOGE(TAG, "Camera initialization failed");
-      res = httpd_resp_set_type(req, "text/html");
-      if(res == ESP_OK) {
-	res = httpd_resp_send(req, kErrCameraInitFailed, strlen(kErrCameraInitFailed));
-      }
-      return res;
-    }
-    camera_fb_t * fb = NULL;
-    size_t fb_len = 0;
-    int64_t fr_start = esp_timer_get_time();
-
-    fb = esp_camera_fb_get();
-    if (!fb) {
-        ESP_LOGE(TAG, "Camera capture failed");
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-    res = httpd_resp_set_type(req, "image/jpeg");
-    if(res == ESP_OK){
-        res = httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
-    }
-
-    if(res == ESP_OK){
-        fb_len = fb->len;
-        res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    }
-    esp_camera_fb_return(fb);
-    int64_t fr_end = esp_timer_get_time();
-    ESP_LOGI(TAG, "JPG: %uKB %ums", (uint32_t)(fb_len/1024), (uint32_t)((fr_end - fr_start)/1000));
-    return res;
-}
-
-static esp_err_t http_server_init(){
-    httpd_handle_t server;
-    httpd_uri_t jpeg_uri = {
-        .uri = "/jpg",
-        .method = HTTP_GET,
-        .handler = jpg_httpd_handler,
-        .user_ctx = NULL
-    };
-
-    httpd_config_t http_options = HTTPD_DEFAULT_CONFIG();
-
-    ESP_ERROR_CHECK(httpd_start(&server, &http_options));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &jpeg_uri));
-
-    return ESP_OK;
-}
 
 static esp_err_t event_handler(void* ctx, system_event_t* event) 
 {
