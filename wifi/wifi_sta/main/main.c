@@ -115,6 +115,9 @@ bool ensure_camera_init(camera_config_t* config) {
 
   is_camera_initialized = true;
 
+  // Allow the camera to adjust to lighting.
+  vTaskDelay(4000 / portTICK_PERIOD_MS);
+
 #ifdef FISH_EYE_CAM
   // flip img, other cam setting view sensor.h
   sensor_t *s = esp_camera_sensor_get();
