@@ -158,6 +158,16 @@ void handle_camera_turn() {
     ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
     return;
   }
+  struct timeval timeout;
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
+  if (setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
+    ESP_LOGE(TAG, "Failed to set socket receive timeout, errno: %d", errno);
+  }
+  if (setsockopt (sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
+    ESP_LOGE(TAG, "Failed to set socket send timeout, errno: %d", errno);
+  }
+
   int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(struct sockaddr_in));
   if (err != 0) {
     ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
@@ -282,16 +292,14 @@ void app_main()
       handle_camera_turn();
     }
 
-    ESP_LOGI(TAG, "Ready to sleep...\n");
-    // We are done; let the watch dog turn off the power for a while.
-    gpio_set_level(GPIO_NUM_4, 1);
-    //http_server_init();
-
-    while (true) {
-      ESP_LOGI(TAG, "Idling...");
+    ESP_LOGI(TAG, "Ready to sleep and then reboot...\n");
+    for (int i = 0; i < 100; i++) {
       vTaskDelay(1000 / portTICK_PERIOD_MS);
+      ESP_LOGI(TAG, "Sleeping (i=%d)...\n", i);
     }
-
+    ESP_LOGI(TAG, "Rebooting\n");
+    fflush(stdout);
+    esp_restart();
 #endif
 }
 
