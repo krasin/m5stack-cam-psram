@@ -26,8 +26,9 @@ static const char* TAG = "camera";
 #define CAM_USE_WIFI
 
 // TODO: define WiFi SSID and password
-#define ESP_WIFI_SSID "Maglev5"
-#define ESP_WIFI_PASS "karawi2barafi"
+#define ESP_WIFI_SSID "compute"
+//#define ESP_WIFI_PASS "karawi2barafi"
+#define ESP_WIFI_PASS ""
 
 #define MAX_STA_CONN  1
 
@@ -101,6 +102,18 @@ static camera_config_t camera_config_qvga = {
 static void wifi_init_softap();
 static esp_err_t http_server_init();
 
+int send_n(int sockfd, const char *buf, size_t len, int flags) {
+  int sent = 0;
+  while (sent < len) {
+    int n = send(sockfd, &buf[sent], len, flags);
+    if (n < 0) {
+      return n;
+    }
+    sent += n;
+  }
+  return len;
+}
+
 bool ensure_camera_init(camera_config_t* config) {
   if (is_camera_initialized) {
     return true;
@@ -134,7 +147,7 @@ void handle_camera_turn() {
   // 1: 320x240 photo is requested.
   // 2: 640x480 photo is requested.
   struct sockaddr_in dest_addr;
-  dest_addr.sin_addr.s_addr = inet_addr("192.168.86.27");
+  dest_addr.sin_addr.s_addr = inet_addr("192.168.4.1");
   dest_addr.sin_family = AF_INET;
   dest_addr.sin_port = htons(10000);
   int addr_family = AF_INET;
@@ -204,7 +217,7 @@ void handle_camera_turn() {
   fb_len = fb->len;
   ESP_LOGI(TAG, "fb_len=%d", fb_len);
   // Sending buffer len. 4 bytes, little endian.
-  int res = send(sock, (const char*)&fb_len, 4, 0);
+  int res = send_n(sock, (const char*)&fb_len, 4, 0);
   if (res < 0) {
     ESP_LOGE(TAG, "failed to send buffer length=%d to the socket, errno: %d", fb_len, errno);
     return;
@@ -212,11 +225,15 @@ void handle_camera_turn() {
   ESP_LOGI(TAG, "buffer len sent");
 
   // Sending the buffer.
-  res = send(sock, (const char *)fb->buf, fb->len, 0);
+  res = send_n(sock, (const char *)fb->buf, fb->len, 0);
   if (res < 0) {
     ESP_LOGE(TAG, "failed to send image of size %d to the socket, errno: %d", fb_len, errno);
     return;
   }
+  // Give it some time to actually send it. ESP32 most likely violates standards here,
+  // or maybe I just don't know what I am doing.
+  vTaskDelay(10000 / portTICK_PERIOD_MS);
+
   esp_camera_fb_return(fb);
   int64_t fr_end = esp_timer_get_time();
   ESP_LOGI(TAG, "JPG: %uKB %ums", (uint32_t)(fb_len/1024), (uint32_t)((fr_end - fr_start)/1000));
@@ -233,7 +250,7 @@ void app_main()
     gpio_set_direction(GPIO_NUM_4, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_4, 0);
     esp_log_level_set("wifi", ESP_LOG_INFO);
-    
+
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) {
         ESP_ERROR_CHECK( nvs_flash_erase() );
@@ -269,7 +286,7 @@ void app_main()
     // We are done; let the watch dog turn off the power for a while.
     gpio_set_level(GPIO_NUM_4, 1);
     //http_server_init();
- 
+
     while (true) {
       ESP_LOGI(TAG, "Idling...");
       vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -280,7 +297,7 @@ void app_main()
 
 #ifdef CAM_USE_WIFI
 
-static esp_err_t event_handler(void* ctx, system_event_t* event) 
+static esp_err_t event_handler(void* ctx, system_event_t* event)
 {
   switch (event->event_id) {
     case SYSTEM_EVENT_STA_START:
@@ -311,7 +328,7 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
   return ESP_OK;
 }
 
-static void wifi_init_softap() 
+static void wifi_init_softap()
 {
   s_wifi_event_group = xEventGroupCreate();
 
