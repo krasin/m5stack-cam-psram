@@ -238,6 +238,7 @@ void handle_camera_turn() {
   case 3:
     ESP_LOGI(TAG, "Using QQVGA config");
     config = &camera_config_qqvga;
+    break;
   default:
     ESP_LOGE(TAG, "Unsupported code %d", rx_buffer[0]);
     return;
