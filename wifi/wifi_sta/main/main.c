@@ -26,8 +26,9 @@ static const char* TAG = "camera";
 #define CAM_USE_WIFI
 
 // TODO: define WiFi SSID and password
-#define ESP_WIFI_SSID "compute"
+//#define ESP_WIFI_SSID "Maglev5"
 //#define ESP_WIFI_PASS "karawi2barafi"
+#define ESP_WIFI_SSID "compute"
 #define ESP_WIFI_PASS ""
 
 #define MAX_STA_CONN  1
@@ -62,7 +63,7 @@ static camera_config_t camera_config_vga = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
+    .pixel_format = PIXFORMAT_YUV422,//YUV422,GRAYSCALE,RGB565,JPEG
     .frame_size = FRAMESIZE_VGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
 
     .jpeg_quality = 15, //0-63 lower number means higher quality
@@ -92,7 +93,7 @@ static camera_config_t camera_config_qvga = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
+    .pixel_format = PIXFORMAT_YUV422,//YUV422,GRAYSCALE,RGB565,JPEG
     .frame_size = FRAMESIZE_QVGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
 
     .jpeg_quality = 15, //0-63 lower number means higher quality
@@ -122,7 +123,7 @@ static camera_config_t camera_config_qqvga = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
+    .pixel_format = PIXFORMAT_YUV422, //PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
     .frame_size = FRAMESIZE_QQVGA, //FRAMESIZE_SVGA,//QQVGA-UXGA Do not use sizes above QVGA when not JPEG
 
     .jpeg_quality = 15, //0-63 lower number means higher quality
@@ -171,13 +172,13 @@ bool ensure_camera_init(camera_config_t* config) {
   return true;
 }
 
-void handle_camera_turn() {
+bool handle_camera_turn() {
   // Connect to the compute box and read one byte.
   // 0: no photo needed, go to sleep.
   // 1: 320x240 photo is requested.
   // 2: 640x480 photo is requested.
   struct sockaddr_in dest_addr;
-  dest_addr.sin_addr.s_addr = inet_addr("192.168.4.1");
+  dest_addr.sin_addr.s_addr = inet_addr("192.168.4.1"/*"192.168.86.27"*/);
   dest_addr.sin_family = AF_INET;
   dest_addr.sin_port = htons(10000);
   int addr_family = AF_INET;
@@ -186,7 +187,7 @@ void handle_camera_turn() {
   int sock =  socket(addr_family, SOCK_STREAM, ip_protocol);
   if (sock < 0) {
     ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-    return;
+    return false;
   }
   struct timeval timeout;
   timeout.tv_sec = 10;
@@ -201,7 +202,7 @@ void handle_camera_turn() {
   int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(struct sockaddr_in));
   if (err != 0) {
     ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
-    return;
+    return false;
   }
   ESP_LOGI(TAG, "Successfully connected");
 
@@ -210,11 +211,11 @@ void handle_camera_turn() {
   int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
   if (len < 0) {
     ESP_LOGE(TAG, "recv failed: errno %d", errno);
-    return;
+    return false;
   }
   if (len > 1) {
     ESP_LOGE(TAG, "too many bytes received: %d", len);
-    return;
+    return false;
   }
   ESP_LOGI(TAG, "byte received: %d", rx_buffer[0]);
 
@@ -222,7 +223,7 @@ void handle_camera_turn() {
     // we go to sleep; not closing the socket, because the compute box should handle such cases,
     // as it's impossible to guarantee that the socket will always be closed.
     // also - avoiding cases, when close(sock) could potentially hang.
-    return;
+    return false;
   }
   camera_config_t* config;
 
@@ -241,13 +242,16 @@ void handle_camera_turn() {
     break;
   default:
     ESP_LOGE(TAG, "Unsupported code %d", rx_buffer[0]);
-    return;
+    return false;
   }
   bool ok = ensure_camera_init(config);
   if (!ok) {
     ESP_LOGE(TAG, "handle_camera_turn: camera initialization failed");
-    return;
+    return false;
   }
+
+  size_t _jpg_buf_len;
+  uint8_t * _jpg_buf;
 
   camera_fb_t * fb = NULL;
   uint32_t fb_len = 0;
@@ -256,35 +260,49 @@ void handle_camera_turn() {
   fb = esp_camera_fb_get();
   if (!fb) {
     ESP_LOGE(TAG, "handle_camera_turn: camera capture failed");
-    return;
+    return false;
   }
-  fb_len = fb->len;
-  ESP_LOGI(TAG, "fb_len=%d", fb_len);
+  pixformat_t format = fb->format;
+  if(format != PIXFORMAT_JPEG){
+    bool jpeg_converted = frame2jpg(fb, 50, &_jpg_buf, &_jpg_buf_len);
+    if(!jpeg_converted){
+      ESP_LOGE(TAG, "JPEG compression failed");
+      esp_camera_fb_return(fb);
+      return false;
+    }
+  } else {
+    _jpg_buf_len = fb->len;
+    _jpg_buf = fb->buf;
+  }
+  ESP_LOGI(TAG, "buffer len=%d", _jpg_buf_len);
   // Sending buffer len. 4 bytes, little endian.
-  int res = send_n(sock, (const char*)&fb_len, 4, 0);
+  int res = send_n(sock, (const char*)&_jpg_buf_len, 4, 0);
   if (res < 0) {
-    ESP_LOGE(TAG, "failed to send buffer length=%d to the socket, errno: %d", fb_len, errno);
-    return;
+    ESP_LOGE(TAG, "failed to send buffer length=%d to the socket, errno: %d", _jpg_buf_len, errno);
+    return false;
   }
   ESP_LOGI(TAG, "buffer len sent");
 
   // Sending the buffer.
-  res = send_n(sock, (const char *)fb->buf, fb->len, 0);
+  res = send_n(sock, (const char *)_jpg_buf, _jpg_buf_len, 0);
   if (res < 0) {
-    ESP_LOGE(TAG, "failed to send image of size %d to the socket, errno: %d", fb_len, errno);
-    return;
+    ESP_LOGE(TAG, "failed to send image of size %d to the socket, errno: %d", _jpg_buf_len, errno);
+    return false;
   }
   // Give it some time to actually send it. ESP32 most likely violates standards here,
   // or maybe I just don't know what I am doing.
   vTaskDelay(10000 / portTICK_PERIOD_MS);
 
-  esp_camera_fb_return(fb);
+  if (format != PIXFORMAT_JPEG) {
+    free(_jpg_buf);
+  }
   int64_t fr_end = esp_timer_get_time();
   ESP_LOGI(TAG, "JPG: %uKB %ums", (uint32_t)(fb_len/1024), (uint32_t)((fr_end - fr_start)/1000));
 
   ESP_LOGI(TAG, "closing the socket...");
   close(sock);
   ESP_LOGI(TAG, "socket closed");
+  return true;
 }
 
 void app_main()
@@ -322,14 +340,17 @@ void app_main()
     }
     vTaskDelay(3000 / portTICK_PERIOD_MS);
 
+    bool image_taken = false;
     if (wifi_ok) {
-      handle_camera_turn();
+      image_taken = handle_camera_turn();
     }
 
-    ESP_LOGI(TAG, "Ready to sleep and then reboot...\n");
-    for (int i = 0; i < 100; i++) {
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-      ESP_LOGI(TAG, "Sleeping (i=%d)...\n", i);
+    if (!image_taken) {
+      ESP_LOGI(TAG, "Ready to sleep and then reboot...\n");
+      for (int i = 0; i < 100; i++) {
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	ESP_LOGI(TAG, "Sleeping (i=%d)...\n", i);
+      }
     }
     ESP_LOGI(TAG, "Rebooting\n");
     fflush(stdout);
